@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from .strategy import make_trade_plan, simulate_trade
+from strategy import make_trade_plan, simulate_trade
 
 
 def weekly_dates(index_df):
