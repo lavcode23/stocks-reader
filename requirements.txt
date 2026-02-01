@@ -2,12 +2,4 @@ streamlit
 pandas
 numpy
 yfinance
-plotly
-scikit-learn
-ta
-statsmodels
-beautifulsoup4
-requests
 pyyaml
-openpyxl
-python-dotenv
