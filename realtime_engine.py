@@ -1,84 +1,67 @@
 import yfinance as yf
 import pandas as pd
-import numpy as np
+import pickle
+import yaml
+from ml_ranker import make_dataset, predict_prob
 
-from ml_ranker import make_dataset, train_model, predict_prob
-
-
-ACCOUNT_EQUITY = 100000
-RISK_PER_TRADE = 0.003
+ACCOUNT = 100000
+RISK = 0.003
 ATR_MULT = 1.5
 RR = 2.0
 
+with open("ml_model.pkl","rb") as f:
+    model = pickle.load(f)
 
-def run_realtime(cfg):
+with open("config.yaml") as f:
+    cfg = yaml.safe_load(f)
 
-    sectors = cfg["universe"]["sectors"]
-    tickers = sorted({t for s in sectors.values() for t in s})
+sectors = cfg["universe"]["sectors"]
+tickers = sorted({t for s in sectors.values() for t in s})
 
-    data = yf.download(tickers, period="6mo", interval="1d", group_by="ticker", progress=False)
+def run_realtime():
 
-    cleaned = {}
-    for t in tickers:
-        if t in data:
-            df = data[t].dropna()
-            df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
-            if len(df) > 60:
-                cleaned[t] = df
-
-    # -------- train ML once --------
-    pool = []
-    for df in cleaned.values():
-        ds = make_dataset(df)
-        if not ds.empty:
-            pool.append(ds)
-
-    model = train_model(pd.concat(pool))
+    # only last 30 days
+    data = yf.download(tickers, period="30d", interval="1d", group_by="ticker", progress=False)
 
     signals = []
 
     for sector, symbols in sectors.items():
         for sym in symbols:
-            if sym not in cleaned:
+            if sym not in data:
                 continue
 
-            df = cleaned[sym]
+            df = data[sym].dropna()
+            df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+            if len(df) < 25:
+                continue
+
             ds = make_dataset(df)
             if ds.empty:
                 continue
 
             prob = predict_prob(model, ds)
 
-            atr = (df["High"] - df["Low"]).rolling(14).mean().iloc[-1]
+            atr = (df["High"]-df["Low"]).rolling(14).mean().iloc[-1]
             close = df["Close"].iloc[-1]
 
             entry = close * 1.002
             stop = entry - atr * ATR_MULT
-            target = entry + RR * (entry - stop)
+            target = entry + RR*(entry-stop)
 
-            risk_amt = ACCOUNT_EQUITY * RISK_PER_TRADE
-            qty = int(risk_amt / max(entry - stop, 1))
+            qty = int((ACCOUNT*RISK)/max(entry-stop,1))
 
             signals.append({
-                "sector": sector,
-                "symbol": sym,
-                "ml_prob": round(prob,3),
-                "entry": round(entry,2),
-                "stop": round(stop,2),
-                "target": round(target,2),
-                "qty": qty
+                "sector":sector,
+                "symbol":sym,
+                "prob":round(prob,3),
+                "entry":round(entry,2),
+                "stop":round(stop,2),
+                "target":round(target,2),
+                "qty":qty
             })
 
     df = pd.DataFrame(signals)
-    df = df.sort_values("ml_prob", ascending=False).head(5)
+    return df.sort_values("prob",ascending=False).head(5)
 
-    return df
-
-
-if __name__ == "__main__":
-    import yaml
-    with open("config.yaml") as f:
-        cfg = yaml.safe_load(f)
-
-    trades = run_realtime(cfg)
-    print(trades)
+if __name__=="__main__":
+    print(run_realtime())
