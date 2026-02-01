@@ -2,12 +2,13 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
+
 def run_backtest(cfg: dict):
 
     start = cfg["backtest"]["start"]
     sectors = cfg["universe"]["sectors"]
 
-    top_n = cfg["signals"]["top_stocks"]
+    top_n = int(cfg["signals"]["top_stocks"])
     equity = float(cfg["trade"]["equity_start"])
     risk = float(cfg["trade"]["risk_per_trade_pct"])
     atr_mult = float(cfg["trade"]["atr_mult"])
@@ -23,22 +24,23 @@ def run_backtest(cfg: dict):
             try:
                 df = yf.download(sym, start=start, progress=False)
 
-                if len(df) < 60:
+                if df is None or len(df) < 60:
                     continue
+
+                df = df.dropna()
 
                 df["ret"] = df["Close"].pct_change()
 
-mom = float(df["Close"].pct_change(20).iloc[-1])
-vol = float(df["ret"].rolling(20).std().iloc[-1])
+                mom = float(df["Close"].pct_change(20).iloc[-1])
+                vol = float(df["ret"].rolling(20).std().iloc[-1])
 
-if np.isnan(mom) or np.isnan(vol):
-    continue
+                if np.isnan(mom) or np.isnan(vol):
+                    continue
 
-score = float(mom / (vol + 1e-6))
-scores.append((sym, score, df))
+                score = float(mom / (vol + 1e-6))
+                scores.append((sym, score, df))
 
-
-            except:
+            except Exception:
                 continue
 
         scores = sorted(scores, key=lambda x: x[1], reverse=True)[:top_n]
@@ -47,6 +49,9 @@ scores.append((sym, score, df))
 
             entry = float(df["Close"].iloc[-1])
             atr = float((df["High"] - df["Low"]).rolling(14).mean().iloc[-1])
+
+            if np.isnan(atr) or atr == 0:
+                continue
 
             stop = entry - atr * atr_mult
             target = entry + atr * atr_mult * rr
@@ -62,23 +67,23 @@ scores.append((sym, score, df))
             trades.append({
                 "sector": sector,
                 "symbol": sym,
-                "entry": round(entry,2),
-                "stop": round(stop,2),
-                "target": round(target,2),
+                "entry": round(entry, 2),
+                "stop": round(stop, 2),
+                "target": round(target, 2),
                 "qty": qty,
-                "pnl": round(pnl,2),
-                "equity": round(equity,2)
+                "pnl": round(pnl, 2),
+                "equity": round(equity, 2),
             })
 
     df_trades = pd.DataFrame(trades)
 
     if not df_trades.empty:
-        winrate = float((df_trades.pnl > 0).mean())
+        winrate = float((df_trades["pnl"] > 0).mean()) * 100.0
     else:
         winrate = 0.0
 
     return {
         "trades": df_trades,
-        "final_equity": round(equity,2),
-        "winrate": round(winrate*100,2)
+        "final_equity": round(equity, 2),
+        "winrate": round(winrate, 2),
     }
