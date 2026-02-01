@@ -3,120 +3,75 @@ import yaml
 import pandas as pd
 
 from backtest import run_backtest
+from realtime_engine import run_realtime
 
-st.set_page_config(layout="wide", page_title="Sector Rotation AI")
+st.set_page_config(layout="wide", page_title="AI Sector Rotation")
 
-st.title("🇮🇳 Daily-First Sector Rotation Strategy (Research Prototype)")
-
-# -------------------------------
-# Load config
-# -------------------------------
-
-with open("config.yaml", "r", encoding="utf-8") as f:
+with open("config.yaml") as f:
     cfg = yaml.safe_load(f)
 
-# -------------------------------
-# Sidebar controls
-# -------------------------------
+st.title("🇮🇳 AI Sector Rotation System")
 
-st.sidebar.header("Run Controls")
+tab1, tab2 = st.tabs(["🚦 Live Signals", "🧪 Research Backtest"])
 
-cfg["backtest"]["start"] = st.sidebar.text_input(
-    "Backtest Start (YYYY-MM-DD)",
-    value=cfg["backtest"]["start"]
-)
+# =====================================================
+# LIVE TAB
+# =====================================================
 
-cfg["signals"]["top_stocks"] = st.sidebar.slider(
-    "Top stocks per sector",
-    1,
-    5,
-    int(cfg["signals"]["top_stocks"]),
-    1
-)
+with tab1:
 
-cfg["trade"]["risk_per_trade_pct"] = st.sidebar.slider(
-    "Risk per trade (% of equity)",
-    0.001,
-    0.02,
-    float(cfg["trade"]["risk_per_trade_pct"]),
-    0.001
-)
+    st.subheader("Today's Trade Signals")
 
-cfg["trade"]["atr_mult"] = st.sidebar.slider(
-    "ATR Multiplier (Stop)",
-    1.0,
-    4.0,
-    float(cfg["trade"]["atr_mult"]),
-    0.1
-)
+    col1,col2,col3 = st.columns(3)
+    col1.metric("Account Equity", "₹100,000")
+    col2.metric("Risk / Trade", "0.3%")
+    col3.metric("Positions", "Top 5")
 
-cfg["trade"]["take_profit_R"] = st.sidebar.slider(
-    "Take Profit (R multiple)",
-    0.5,
-    3.0,
-    float(cfg["trade"]["take_profit_R"]),
-    0.1
-)
+    if st.button("🔄 Refresh Signals"):
 
-run = st.sidebar.button("🚀 Run Backtest")
+        with st.spinner("Fetching live market data..."):
+            df = run_realtime()
 
-st.markdown("""
-This prototype:
+        if df.empty:
+            st.warning("No signals today.")
+        else:
+            st.dataframe(df, use_container_width=True)
 
-• Ranks stocks by momentum / volatility per sector  
-• Builds ATR-based stop loss  
-• Risk-sizes each position  
-• Simulates exits at target  
-• Reports trades + win rate  
+            csv = df.to_csv(index=False).encode()
+            st.download_button("⬇ Download CSV", csv, "signals.csv")
 
-⚠️ Research only. Not financial advice.
-""")
+# =====================================================
+# BACKTEST TAB
+# =====================================================
 
-# -------------------------------
-# Run backtest
-# -------------------------------
+with tab2:
 
-if not run:
-    st.info("Adjust parameters in sidebar and click **Run Backtest**.")
-    st.stop()
+    st.subheader("Strategy Backtest")
 
-try:
-    result = run_backtest(cfg)
-except Exception as e:
-    st.exception(e)
-    st.stop()
+    cfg["backtest"]["start"] = st.text_input(
+        "Backtest Start",
+        value=cfg["backtest"]["start"]
+    )
 
-# -------------------------------
-# Results
-# -------------------------------
+    run = st.button("Run Backtest")
 
-trades = result["trades"]
-final_equity = result["final_equity"]
-winrate = result["winrate"]
+    if run:
 
-c1, c2, c3 = st.columns(3)
-c1.metric("Total Trades", 0 if trades is None else len(trades))
-c2.metric("Win Rate (%)", winrate)
-c3.metric("Final Equity (₹)", final_equity)
+        with st.spinner("Running backtest..."):
+            res = run_backtest(cfg)
 
-st.subheader("📄 Trades")
+        trades = res["trades"]
 
-if trades is None or trades.empty:
-    st.warning("No trades generated.")
-else:
-    st.dataframe(trades, use_container_width=True)
+        c1,c2,c3 = st.columns(3)
+        c1.metric("Trades", len(trades))
+        c2.metric("Win Rate", f"{res['winrate']}%")
+        c3.metric("Final Equity", f"₹{res['final_equity']}")
 
-# -------------------------------
-# Equity curve
-# -------------------------------
+        st.dataframe(trades, use_container_width=True)
 
-if trades is not None and not trades.empty:
-    st.subheader("📈 Equity Curve")
+        if not trades.empty:
+            eq = trades[["equity"]].copy()
+            eq["i"] = range(len(eq))
+            eq = eq.set_index("i")
+            st.line_chart(eq)
 
-    eq = trades[["equity"]].copy()
-    eq["step"] = range(len(eq))
-    eq = eq.set_index("step")
-
-    st.line_chart(eq)
-
-st.success("Backtest completed.")
