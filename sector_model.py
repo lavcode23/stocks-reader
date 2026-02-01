@@ -1,13 +1,12 @@
 import numpy as np
 
-def sector_scores(sectors: dict[str, list[str]], prices: dict[str, dict[str, float]]) -> dict[str, float]:
+def sector_scores(sectors: dict[str, list[str]], returns_5d: dict[str, float]) -> dict[str, float]:
     """
-    prices[sector][ticker] = recent_return (e.g., last 5d)
-    score = mean(top returns) - penalty for dispersion (risk)
+    Score sector using top-constituent momentum and dispersion penalty.
     """
     out = {}
     for s, tks in sectors.items():
-        rets = [prices.get(s, {}).get(t, np.nan) for t in tks]
+        rets = [returns_5d.get(t, np.nan) for t in tks]
         rets = [r for r in rets if r == r]
         if not rets:
             out[s] = -1e9
