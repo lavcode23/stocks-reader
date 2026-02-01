@@ -23,14 +23,8 @@ class TradeResult:
     gross_return: float
 
 
-def make_trade_plan(
-    ticker,
-    prices,
-    signal_date,
-    holding_days,
-    stop_loss_pct,
-    take_profit_pct,
-):
+def make_trade_plan(ticker, prices, signal_date, holding_days, stop_loss_pct, take_profit_pct):
+
     prices = prices.copy()
     prices.index = pd.to_datetime(prices.index)
 
@@ -39,25 +33,19 @@ def make_trade_plan(
         return None
 
     entry_date = future.index[0]
-    entry_price = float(future.loc[entry_date, "Open"])
+    entry_price = float(future.loc[entry_date]["Open"])
 
     stop_price = entry_price * (1 - stop_loss_pct)
     take_price = entry_price * (1 + take_profit_pct)
 
     after = prices.loc[prices.index >= entry_date]
-    planned_exit = after.index[min(len(after) - 1, holding_days)]
+    planned_exit = after.index[min(len(after)-1, holding_days)]
 
-    return TradePlan(
-        ticker,
-        entry_date,
-        entry_price,
-        stop_price,
-        take_price,
-        planned_exit,
-    )
+    return TradePlan(ticker, entry_date, entry_price, stop_price, take_price, planned_exit)
 
 
 def simulate_trade(prices, plan):
+
     df = prices.copy()
     df.index = pd.to_datetime(df.index)
 
@@ -81,12 +69,4 @@ def simulate_trade(prices, plan):
 
     ret = exit_price / plan.entry_price - 1
 
-    return TradeResult(
-        plan.ticker,
-        plan.entry_date,
-        exit_date,
-        plan.entry_price,
-        exit_price,
-        reason,
-        float(ret),
-    )
+    return TradeResult(plan.ticker, plan.entry_date, exit_date, plan.entry_price, exit_price, reason, float(ret))
