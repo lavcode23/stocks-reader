@@ -50,7 +50,12 @@ if not run:
     st.stop()
 
 with st.spinner("Running full pipeline (daily-first)…"):
+    try:
     result = run_backtest(cfg)
+except Exception as e:
+    st.exception(e)
+    st.stop()
+
 
 plans = result["trade_plans"]
 trades = result["trades"]
