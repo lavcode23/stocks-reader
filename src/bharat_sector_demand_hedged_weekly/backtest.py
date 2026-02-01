@@ -1,41 +1,44 @@
 import numpy as np
 import pandas as pd
 import yfinance as yf
+import importlib.util
+from pathlib import Path
 
-from strategy import make_trade_plan, simulate_trade
+BASE = Path(__file__).parent
+
+# Load strategy by absolute path
+spec = importlib.util.spec_from_file_location("strategy", BASE / "strategy.py")
+strategy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(strategy)
+
+make_trade_plan = strategy.make_trade_plan
+simulate_trade = strategy.simulate_trade
 
 
-def weekly_dates(index_df):
-    d = pd.DataFrame(index=index_df.index)
-    d["week"] = d.index.to_period("W-FRI")
-    return d.groupby("week").tail(1).index
+def weekly_dates(df):
+    d = pd.DataFrame(index=df.index)
+    d["w"] = d.index.to_period("W-FRI")
+    return d.groupby("w").tail(1).index
 
 
-def backtest(
-    sectors,
-    start,
-    stop_loss,
-    take_profit,
-    holding_days=5,
-):
-    all_stocks = sorted({x for v in sectors.values() for x in v})
-    prices = yf.download(all_stocks, start=start, progress=False, group_by="ticker")
+def backtest(sectors, start, stop_loss, take_profit, holding_days):
 
-    benchmark = yf.download("^NSEI", start=start, progress=False)
+    stocks = sorted({x for v in sectors.values() for x in v})
+    prices = yf.download(stocks, start=start, progress=False, group_by="ticker")
+    index = yf.download("^NSEI", start=start, progress=False)
 
-    signals = weekly_dates(benchmark)
+    signals = weekly_dates(index)
 
     trades = []
 
     for sd in signals:
         sector_scores = {}
 
-        for s, tickers in sectors.items():
+        for s, tks in sectors.items():
             vals = []
-            for t in tickers:
+            for t in tks:
                 try:
-                    df = prices[t]
-                    df = df.loc[df.index <= sd]
+                    df = prices[t].loc[:sd]
                     r = df["Close"].iloc[-1] / df["Close"].iloc[-5] - 1
                     vals.append(r)
                 except:
@@ -50,12 +53,15 @@ def backtest(
                 df = prices[t]
                 plan = make_trade_plan(t, df, sd, holding_days, stop_loss, take_profit)
                 if plan:
-                    res = simulate_trade(df, plan)
-                    trades.append(res.__dict__)
+                    r = simulate_trade(df, plan)
+                    trades.append(r.__dict__)
             except:
                 continue
 
     df = pd.DataFrame(trades)
+    if df.empty:
+        return {"trades": df, "win_rate": 0, "avg_return": 0}
+
     df["win"] = df["gross_return"] > 0
 
     return {
