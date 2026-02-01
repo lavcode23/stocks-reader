@@ -27,11 +27,16 @@ def run_backtest(cfg: dict):
                     continue
 
                 df["ret"] = df["Close"].pct_change()
-                mom = df["Close"].pct_change(20).iloc[-1]
-                vol = df["ret"].rolling(20).std().iloc[-1]
 
-                score = mom / (vol + 1e-6)
-                scores.append((sym, score, df))
+mom = float(df["Close"].pct_change(20).iloc[-1])
+vol = float(df["ret"].rolling(20).std().iloc[-1])
+
+if np.isnan(mom) or np.isnan(vol):
+    continue
+
+score = float(mom / (vol + 1e-6))
+scores.append((sym, score, df))
+
 
             except:
                 continue
