@@ -7,6 +7,9 @@ from hedging import beta, hedge_ratio
 from options_proxy import protective_put_proxy
 
 
+HOLD_DAYS = 5
+
+
 def run_backtest(cfg: dict):
 
     start = cfg["backtest"]["start"]
@@ -20,24 +23,34 @@ def run_backtest(cfg: dict):
 
     trades = []
 
-    # NIFTY benchmark
     bench = yf.download("^NSEI", start=start, progress=False).dropna()
 
-    for sector, symbols in sectors.items():
+    # preload stock data
+    data = {}
+    for s in sectors.values():
+        for t in s:
+            if t not in data:
+                d = yf.download(t, start=start, progress=False)
+                if d is not None and len(d) > 120:
+                    data[t] = d.dropna()
 
+    dates = bench.index
+
+    for i in range(120, len(dates) - HOLD_DAYS - 1):
+
+        today = dates[i]
+
+        # ---------------- sector scan ----------------
         scores = []
-
-        # -------------------------------
-        # Momentum + volatility ranking
-        # -------------------------------
-        for sym in symbols:
-            try:
-                df = yf.download(sym, start=start, progress=False)
-
-                if df is None or len(df) < 120:
+        for sector, symbols in sectors.items():
+            for sym in symbols:
+                if sym not in data:
                     continue
 
-                df = df.dropna()
+                df = data[sym].loc[:today]
+                if len(df) < 60:
+                    continue
+
                 df["ret"] = df["Close"].pct_change()
 
                 mom = float(df["Close"].pct_change(20).iloc[-1])
@@ -47,19 +60,14 @@ def run_backtest(cfg: dict):
                     continue
 
                 base_score = float(mom / (vol + 1e-6))
-                scores.append((sym, base_score, df))
-
-            except Exception:
-                continue
+                scores.append((sector, sym, base_score, df.copy()))
 
         if not scores:
             continue
 
-        # -------------------------------
-        # ML ranking
-        # -------------------------------
+        # ---------------- ML ranking ----------------
         pool = []
-        for _, _, d in scores:
+        for _, _, _, d in scores:
             ds = make_dataset(d)
             if not ds.empty:
                 pool.append(ds)
@@ -71,26 +79,26 @@ def run_backtest(cfg: dict):
                 model = train_model(big)
 
         ranked = []
-        for sym, base_score, df in scores:
+        for sector, sym, base_score, df in scores:
             ds = make_dataset(df)
             if model is not None and not ds.empty:
                 p = predict_prob(model, ds)
             else:
                 p = 0.5
-            final_score = float(base_score + 0.25 * (p - 0.5))
-            ranked.append((sym, final_score, df))
+            ranked.append((sector, sym, base_score + 0.25*(p-0.5), df))
 
-        ranked = sorted(ranked, key=lambda x: x[1], reverse=True)[:top_n]
+        ranked = sorted(ranked, key=lambda x: x[2], reverse=True)[:top_n]
 
-        # -------------------------------
-        # Trade simulation (daily)
-        # -------------------------------
-        for sym, _, df in ranked:
+        # ---------------- trade execution ----------------
+        for sector, sym, _, df in ranked:
 
-            entry = float(df["Close"].iloc[-1])
-            atr = float((df["High"] - df["Low"]).rolling(14).mean().iloc[-1])
+            hist = df.iloc[:-1]
+            if len(hist) < 60:
+                continue
 
-            if np.isnan(atr) or atr == 0:
+            entry = float(hist["Close"].iloc[-1])
+            atr = float((hist["High"] - hist["Low"]).rolling(14).mean().iloc[-1])
+            if atr <= 0:
                 continue
 
             stop = entry - atr * atr_mult
@@ -99,68 +107,68 @@ def run_backtest(cfg: dict):
             risk_amt = equity * risk
             qty = max(int(risk_amt / max(entry - stop, 0.01)), 1)
 
-            # ---- realistic exit over next 5 days ----
-            future = df.tail(6).copy()
+            future = data[sym].loc[today:].iloc[1:HOLD_DAYS+1]
+            if len(future) < 2:
+                continue
 
             exit_price = float(future["Close"].iloc[-1])
             exit_reason = "TIME"
 
             for _, r in future.iterrows():
-                if float(r["Low"]) <= stop:
+                if r["Low"] <= stop:
                     exit_price = stop
                     exit_reason = "STOP"
                     break
-                if float(r["High"]) >= target:
+                if r["High"] >= target:
                     exit_price = target
                     exit_reason = "TARGET"
                     break
 
             gross_pnl = (exit_price - entry) * qty
 
-            # -------------------------------
-            # Hedge vs NIFTY
-            # -------------------------------
+            # -------- hedge using same window --------
+            bench_slice = bench.loc[today:].iloc[1:HOLD_DAYS+1]
+            bench_ret = float(bench_slice["Close"].iloc[-1] / bench_slice["Close"].iloc[0] - 1)
+
             try:
-                b = beta(df["Close"], bench["Close"])
-            except Exception:
+                b = beta(hist["Close"], bench["Close"])
+            except:
                 b = 0.0
 
             h = hedge_ratio(b)
-            bench_ret = float(bench["Close"].pct_change().iloc[-1]) if len(bench) > 2 else 0.0
             hedged_pnl = gross_pnl - (h * bench_ret * equity)
 
-            # -------------------------------
-            # Options proxy
-            # -------------------------------
+            # -------- options proxy --------
             weekly_ret = hedged_pnl / equity
             weekly_ret = protective_put_proxy(weekly_ret)
 
             equity *= (1 + weekly_ret)
 
             trades.append({
+                "date": today,
                 "sector": sector,
                 "symbol": sym,
-                "entry": round(entry, 2),
-                "stop": round(stop, 2),
-                "target": round(target, 2),
+                "entry": round(entry,2),
+                "stop": round(stop,2),
+                "target": round(target,2),
                 "qty": qty,
-                "exit_price": round(exit_price, 2),
+                "exit_price": round(exit_price,2),
                 "exit_reason": exit_reason,
-                "gross_pnl": round(gross_pnl, 2),
-                "hedge_ratio": round(h, 2),
-                "final_week_return": round(weekly_ret * 100, 2),
-                "equity": round(equity, 2),
+                "gross_pnl": round(gross_pnl,2),
+                "hedge_ratio": round(h,2),
+                "final_week_return": round(weekly_ret*100,2),
+                "equity": round(equity,2),
             })
 
     df_trades = pd.DataFrame(trades)
 
     if not df_trades.empty:
-        winrate = float((df_trades["final_week_return"] > 0).mean()) * 100.0
+        winrate = float((df_trades["final_week_return"] > 0).mean()) * 100
     else:
         winrate = 0.0
 
     return {
         "trades": df_trades,
-        "final_equity": round(equity, 2),
-        "winrate": round(winrate, 2),
+        "final_equity": round(equity,2),
+        "winrate": round(winrate,2),
     }
