@@ -32,7 +32,9 @@ def run_backtest(cfg: dict):
             if t not in data:
                 d = yf.download(t, start=start, progress=False)
                 if d is not None and len(d) > 120:
-                    data[t] = d.dropna()
+                    d = d.dropna()
+                    d.columns = [c[0] if isinstance(c, tuple) else c for c in d.columns]
+                    data[t] = d
 
     dates = bench.index
 
@@ -40,14 +42,13 @@ def run_backtest(cfg: dict):
 
         today = dates[i]
 
-        # ---------------- sector scan ----------------
         scores = []
         for sector, symbols in sectors.items():
             for sym in symbols:
                 if sym not in data:
                     continue
 
-                df = data[sym].loc[:today]
+                df = data[sym].loc[:today].copy()
                 if len(df) < 60:
                     continue
 
@@ -60,12 +61,12 @@ def run_backtest(cfg: dict):
                     continue
 
                 base_score = float(mom / (vol + 1e-6))
-                scores.append((sector, sym, base_score, df.copy()))
+                scores.append((sector, sym, base_score, df))
 
         if not scores:
             continue
 
-        # ---------------- ML ranking ----------------
+        # -------- ML ranking --------
         pool = []
         for _, _, _, d in scores:
             ds = make_dataset(d)
@@ -89,7 +90,7 @@ def run_backtest(cfg: dict):
 
         ranked = sorted(ranked, key=lambda x: x[2], reverse=True)[:top_n]
 
-        # ---------------- trade execution ----------------
+        # -------- trade execution --------
         for sector, sym, _, df in ranked:
 
             hist = df.iloc[:-1]
@@ -115,18 +116,20 @@ def run_backtest(cfg: dict):
             exit_reason = "TIME"
 
             for _, r in future.iterrows():
-                if r["Low"] <= stop:
+                low = float(r["Low"])
+                high = float(r["High"])
+
+                if low <= stop:
                     exit_price = stop
                     exit_reason = "STOP"
                     break
-                if r["High"] >= target:
+                if high >= target:
                     exit_price = target
                     exit_reason = "TARGET"
                     break
 
             gross_pnl = (exit_price - entry) * qty
 
-            # -------- hedge using same window --------
             bench_slice = bench.loc[today:].iloc[1:HOLD_DAYS+1]
             bench_ret = float(bench_slice["Close"].iloc[-1] / bench_slice["Close"].iloc[0] - 1)
 
@@ -138,7 +141,6 @@ def run_backtest(cfg: dict):
             h = hedge_ratio(b)
             hedged_pnl = gross_pnl - (h * bench_ret * equity)
 
-            # -------- options proxy --------
             weekly_ret = hedged_pnl / equity
             weekly_ret = protective_put_proxy(weekly_ret)
 
