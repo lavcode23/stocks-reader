@@ -20,21 +20,21 @@ def run_backtest(cfg: dict):
 
     trades = []
 
-    # Benchmark for hedge
-    bench = yf.download("^NSEI", start=start, progress=False)
-    bench = bench.dropna()
+    # NIFTY benchmark
+    bench = yf.download("^NSEI", start=start, progress=False).dropna()
 
     for sector, symbols in sectors.items():
 
         scores = []
 
         # -------------------------------
-        # Build momentum + vol scores
+        # Momentum + volatility ranking
         # -------------------------------
         for sym in symbols:
             try:
                 df = yf.download(sym, start=start, progress=False)
-                if df is None or len(df) < 80:
+
+                if df is None or len(df) < 120:
                     continue
 
                 df = df.dropna()
@@ -56,7 +56,7 @@ def run_backtest(cfg: dict):
             continue
 
         # -------------------------------
-        # ML ranking (pooled model)
+        # ML ranking
         # -------------------------------
         pool = []
         for _, _, d in scores:
@@ -67,7 +67,7 @@ def run_backtest(cfg: dict):
         model = None
         if pool:
             big = pd.concat(pool)
-            if len(big) > 200:
+            if len(big) > 300:
                 model = train_model(big)
 
         ranked = []
@@ -83,7 +83,7 @@ def run_backtest(cfg: dict):
         ranked = sorted(ranked, key=lambda x: x[1], reverse=True)[:top_n]
 
         # -------------------------------
-        # Trade simulation
+        # Trade simulation (daily)
         # -------------------------------
         for sym, _, df in ranked:
 
@@ -99,12 +99,26 @@ def run_backtest(cfg: dict):
             risk_amt = equity * risk
             qty = max(int(risk_amt / max(entry - stop, 0.01)), 1)
 
-            # naive exit at target (daily-first research)
-            exit_price = target
+            # ---- realistic exit over next 5 days ----
+            future = df.tail(6).copy()
+
+            exit_price = float(future["Close"].iloc[-1])
+            exit_reason = "TIME"
+
+            for _, r in future.iterrows():
+                if float(r["Low"]) <= stop:
+                    exit_price = stop
+                    exit_reason = "STOP"
+                    break
+                if float(r["High"]) >= target:
+                    exit_price = target
+                    exit_reason = "TARGET"
+                    break
+
             gross_pnl = (exit_price - entry) * qty
 
             # -------------------------------
-            # Hedge
+            # Hedge vs NIFTY
             # -------------------------------
             try:
                 b = beta(df["Close"], bench["Close"])
@@ -112,7 +126,6 @@ def run_backtest(cfg: dict):
                 b = 0.0
 
             h = hedge_ratio(b)
-
             bench_ret = float(bench["Close"].pct_change().iloc[-1]) if len(bench) > 2 else 0.0
             hedged_pnl = gross_pnl - (h * bench_ret * equity)
 
@@ -131,6 +144,8 @@ def run_backtest(cfg: dict):
                 "stop": round(stop, 2),
                 "target": round(target, 2),
                 "qty": qty,
+                "exit_price": round(exit_price, 2),
+                "exit_reason": exit_reason,
                 "gross_pnl": round(gross_pnl, 2),
                 "hedge_ratio": round(h, 2),
                 "final_week_return": round(weekly_ret * 100, 2),
