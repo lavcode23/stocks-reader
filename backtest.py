@@ -8,6 +8,7 @@ from options_proxy import protective_put_proxy
 
 
 HOLD_DAYS = 5
+STEP = 5   # weekly
 
 
 def run_backtest(cfg: dict):
@@ -23,32 +24,49 @@ def run_backtest(cfg: dict):
 
     trades = []
 
-    bench = yf.download("^NSEI", start=start, progress=False).dropna()
+    # ---------------- Batch download ----------------
+    tickers = sorted({t for s in sectors.values() for t in s})
+    data = yf.download(tickers, start=start, group_by="ticker", progress=False)
 
-    # preload stock data
-    data = {}
-    for s in sectors.values():
-        for t in s:
-            if t not in data:
-                d = yf.download(t, start=start, progress=False)
-                if d is not None and len(d) > 120:
-                    d = d.dropna()
-                    d.columns = [c[0] if isinstance(c, tuple) else c for c in d.columns]
-                    data[t] = d
+    # flatten columns
+    cleaned = {}
+    for t in tickers:
+        if t in data:
+            df = data[t].dropna()
+            if len(df) > 120:
+                df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+                cleaned[t] = df
+
+    bench = yf.download("^NSEI", start=start, progress=False).dropna()
 
     dates = bench.index
 
-    for i in range(120, len(dates) - HOLD_DAYS - 1):
+    # ---------------- Train ML once ----------------
+    pool = []
+    for df in cleaned.values():
+        ds = make_dataset(df)
+        if not ds.empty:
+            pool.append(ds)
+
+    model = None
+    if pool:
+        big = pd.concat(pool)
+        if len(big) > 300:
+            model = train_model(big)
+
+    # ---------------- Weekly loop ----------------
+    for i in range(120, len(dates) - HOLD_DAYS - 1, STEP):
 
         today = dates[i]
 
         scores = []
+
         for sector, symbols in sectors.items():
             for sym in symbols:
-                if sym not in data:
+                if sym not in cleaned:
                     continue
 
-                df = data[sym].loc[:today].copy()
+                df = cleaned[sym].loc[:today].copy()
                 if len(df) < 60:
                     continue
 
@@ -60,37 +78,22 @@ def run_backtest(cfg: dict):
                 if np.isnan(mom) or np.isnan(vol) or vol == 0:
                     continue
 
-                base_score = float(mom / (vol + 1e-6))
-                scores.append((sector, sym, base_score, df))
+                base = mom / (vol + 1e-6)
+
+                ds = make_dataset(df)
+                if model is not None and not ds.empty:
+                    p = predict_prob(model, ds)
+                else:
+                    p = 0.5
+
+                scores.append((sector, sym, base + 0.25*(p-0.5), df))
 
         if not scores:
             continue
 
-        # -------- ML ranking --------
-        pool = []
-        for _, _, _, d in scores:
-            ds = make_dataset(d)
-            if not ds.empty:
-                pool.append(ds)
+        ranked = sorted(scores, key=lambda x: x[2], reverse=True)[:top_n]
 
-        model = None
-        if pool:
-            big = pd.concat(pool)
-            if len(big) > 300:
-                model = train_model(big)
-
-        ranked = []
-        for sector, sym, base_score, df in scores:
-            ds = make_dataset(df)
-            if model is not None and not ds.empty:
-                p = predict_prob(model, ds)
-            else:
-                p = 0.5
-            ranked.append((sector, sym, base_score + 0.25*(p-0.5), df))
-
-        ranked = sorted(ranked, key=lambda x: x[2], reverse=True)[:top_n]
-
-        # -------- trade execution --------
+        # ---------------- Trades ----------------
         for sector, sym, _, df in ranked:
 
             hist = df.iloc[:-1]
@@ -108,7 +111,7 @@ def run_backtest(cfg: dict):
             risk_amt = equity * risk
             qty = max(int(risk_amt / max(entry - stop, 0.01)), 1)
 
-            future = data[sym].loc[today:].iloc[1:HOLD_DAYS+1]
+            future = cleaned[sym].loc[today:].iloc[1:HOLD_DAYS+1]
             if len(future) < 2:
                 continue
 
@@ -141,9 +144,7 @@ def run_backtest(cfg: dict):
             h = hedge_ratio(b)
             hedged_pnl = gross_pnl - (h * bench_ret * equity)
 
-            weekly_ret = hedged_pnl / equity
-            weekly_ret = protective_put_proxy(weekly_ret)
-
+            weekly_ret = protective_put_proxy(hedged_pnl / equity)
             equity *= (1 + weekly_ret)
 
             trades.append({
