@@ -1,47 +1,61 @@
 universe:
   sectors:
-    IT: ["TCS.NS","INFY.NS","WIPRO.NS"]
-    BANK: ["HDFCBANK.NS","ICICIBANK.NS","SBIN.NS"]
-    PHARMA: ["SUNPHARMA.NS","DRREDDY.NS","CIPLA.NS"]
+    IT: ["TCS.NS","INFY.NS","WIPRO.NS","HCLTECH.NS","TECHM.NS"]
+    BANK: ["HDFCBANK.NS","ICICIBANK.NS","SBIN.NS","AXISBANK.NS","KOTAKBANK.NS"]
+    FINANCE: ["BAJFINANCE.NS","BAJAJFINSV.NS","HDFCLIFE.NS","SBILIFE.NS","ICICIPRULI.NS"]
+    FMCG: ["HINDUNILVR.NS","ITC.NS","NESTLEIND.NS","BRITANNIA.NS","DABUR.NS"]
+    PHARMA: ["SUNPHARMA.NS","DRREDDY.NS","CIPLA.NS","DIVISLAB.NS","LUPIN.NS"]
+    METAL: ["TATASTEEL.NS","JSWSTEEL.NS","HINDALCO.NS","VEDL.NS","SAIL.NS"]
+    ENERGY: ["RELIANCE.NS","ONGC.NS","BPCL.NS","IOC.NS","GAIL.NS"]
+    AUTO: ["MARUTI.NS","TATAMOTORS.NS","M&M.NS","BAJAJ-AUTO.NS","EICHERMOT.NS"]
+    REALTY: ["DLF.NS","GODREJPROP.NS","OBEROIRLTY.NS","PHOENIXLTD.NS","PRESTIGE.NS"]
+    INFRA: ["LT.NS","ADANIPORTS.NS","SIEMENS.NS","ABB.NS","KEC.NS"]
+    CEMENT: ["ULTRACEMCO.NS","AMBUJACEM.NS","ACC.NS","SHREECEM.NS","DALBHARAT.NS"]
+    CONSUMER: ["TITAN.NS","ASIANPAINT.NS","PIDILITIND.NS","BERGEPAINT.NS","HAVELLS.NS"]
+    MEDIA: ["ZEEL.NS","SUNTV.NS","PVRINOX.NS","TVTODAY.NS"]
+    TELECOM: ["BHARTIARTL.NS","IDEA.NS","INDUSTOWER.NS"]
 
 data:
-  timeframe: "1d"      # "1m" for minute mode (needs real data source)
+  timeframe: "1d"
   lookback_days: 260
   momentum_days: 5
 
 signals:
   top_sectors: 1
   top_stocks: 3
-  use_news_proxy: false   # keep false unless you implement RSS
 
 ml:
   enabled: true
-  model: "logreg"       # "rf" optional
-  train_years: 4
-  test_years: 1
+  model: "logreg"       # "logreg" or "rf"
+  min_train_rows: 200
 
 trade:
   entry_mode: "breakout"     # "breakout" or "open"
-  breakout_buffer_pct: 0.001 # 0.10% buffer above trigger
-  risk_per_trade_pct: 0.005  # 0.5% of equity risked per trade
+  breakout_buffer_pct: 0.001 # 0.10% buffer
+  equity_start: 100000       # ₹
+  risk_per_trade_pct: 0.005  # 0.5% risk per trade
   stop_mode: "atr"
   atr_period: 14
   atr_mult: 2.0
-  take_profit_R: 1.5         # TP at 1.5R
+  take_profit_R: 1.5
   holding_days: 5
 
 hedge:
   enabled: true
-  instrument: "^NSEI"        # proxy for NIFTY; replace with NIFTY ETF if desired
+  instrument: "^NSEI"        # NIFTY proxy
   beta_lookback_days: 90
-  hedge_ratio_cap: 1.0       # avoid over-hedging
+  hedge_ratio_cap: 1.0
 
 options_proxy:
   enabled: true
   mode: "protective_put_proxy"
-  premium_bps_per_week: 20   # 0.20% weekly premium proxy
-  crash_protection_pct: 0.03 # protection kicks in beyond -3% weekly move
+  premium_bps_per_week: 20
+  crash_protection_pct: 0.03
 
 costs:
   slippage_bps: 5
   fee_bps: 10
+
+backtest:
+  start: "2019-01-01"
+  end: null
