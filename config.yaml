@@ -4,9 +4,44 @@ universe:
     BANK: ["HDFCBANK.NS","ICICIBANK.NS","SBIN.NS"]
     PHARMA: ["SUNPHARMA.NS","DRREDDY.NS","CIPLA.NS"]
 
-trade:
-  stop_loss_pct: 0.02
-  take_profit_pct: 0.02
+data:
+  timeframe: "1d"      # "1m" for minute mode (needs real data source)
+  lookback_days: 260
+  momentum_days: 5
 
-backtest:
-  start: "2019-01-01"
+signals:
+  top_sectors: 1
+  top_stocks: 3
+  use_news_proxy: false   # keep false unless you implement RSS
+
+ml:
+  enabled: true
+  model: "logreg"       # "rf" optional
+  train_years: 4
+  test_years: 1
+
+trade:
+  entry_mode: "breakout"     # "breakout" or "open"
+  breakout_buffer_pct: 0.001 # 0.10% buffer above trigger
+  risk_per_trade_pct: 0.005  # 0.5% of equity risked per trade
+  stop_mode: "atr"
+  atr_period: 14
+  atr_mult: 2.0
+  take_profit_R: 1.5         # TP at 1.5R
+  holding_days: 5
+
+hedge:
+  enabled: true
+  instrument: "^NSEI"        # proxy for NIFTY; replace with NIFTY ETF if desired
+  beta_lookback_days: 90
+  hedge_ratio_cap: 1.0       # avoid over-hedging
+
+options_proxy:
+  enabled: true
+  mode: "protective_put_proxy"
+  premium_bps_per_week: 20   # 0.20% weekly premium proxy
+  crash_protection_pct: 0.03 # protection kicks in beyond -3% weekly move
+
+costs:
+  slippage_bps: 5
+  fee_bps: 10
