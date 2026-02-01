@@ -1,32 +1,27 @@
 import pandas as pd
-import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
 
 FEATURES = ["ret5", "trend", "vol20"]
 
-def make_dataset(price_df: pd.DataFrame) -> pd.DataFrame:
-    df = price_df.copy()
-    df["ret1"] = df["Close"].pct_change(1)
-    df["ret5"] = df["Close"].pct_change(5)
-    df["ma5"] = df["Close"].rolling(5).mean()
-    df["ma20"] = df["Close"].rolling(20).mean()
-    df["trend"] = (df["ma5"] / df["ma20"] - 1.0)
-    df["vol20"] = df["ret1"].rolling(20).std()
-    df["fwd5"] = df["Close"].shift(-5) / df["Close"] - 1.0
-    df["y"] = (df["fwd5"] > 0).astype(int)
-    return df.dropna()
+def make_dataset(df: pd.DataFrame) -> pd.DataFrame:
+    d = df.copy()
+    d["ret1"] = d["Close"].pct_change(1)
+    d["ret5"] = d["Close"].pct_change(5)
+    d["ma5"] = d["Close"].rolling(5).mean()
+    d["ma20"] = d["Close"].rolling(20).mean()
+    d["trend"] = (d["ma5"] / d["ma20"] - 1.0)
+    d["vol20"] = d["ret1"].rolling(20).std()
+    d["fwd5"] = d["Close"].shift(-5) / d["Close"] - 1.0
+    d["y"] = (d["fwd5"] > 0).astype(int)
+    return d.dropna()
 
-def train_model(dataset: pd.DataFrame, model_name: str = "logreg"):
-    X = dataset[FEATURES].values
-    y = dataset["y"].values
-    if model_name == "rf":
-        m = RandomForestClassifier(n_estimators=250, random_state=42, max_depth=5)
-    else:
-        m = LogisticRegression(max_iter=800)
+def train_model(ds: pd.DataFrame):
+    X = ds[FEATURES].values
+    y = ds["y"].values
+    m = LogisticRegression(max_iter=500)
     m.fit(X, y)
     return m
 
-def predict_proba(model, feature_row: pd.DataFrame) -> float:
-    X = feature_row[FEATURES].tail(1).values
-    return float(model.predict_proba(X)[0, 1])
+def predict_prob(model, row: pd.DataFrame) -> float:
+    X = row[FEATURES].tail(1).values
+    return float(model.predict_proba(X)[0,1])
