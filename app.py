@@ -1,79 +1,103 @@
 import streamlit as st
 import yaml
 import pandas as pd
+import yfinance as yf
+from datetime import datetime
 
 from backtest import run_backtest
 from realtime_engine import run_realtime
 
-st.set_page_config(layout="wide", page_title="AI Trading System")
+st.set_page_config(layout="wide", page_title="AI Trading Terminal")
+
+ACCOUNT = 100000
 
 with open("config.yaml") as f:
     cfg = yaml.safe_load(f)
 
-ACCOUNT = 100000
+st.title("📊 AI Trading Terminal")
 
-st.title("🇮🇳 AI Sector Rotation Trading System")
-
-tab_live, tab_backtest, tab_settings = st.tabs(
-    ["🚦 Live Trading", "🧪 Research Backtest", "⚙️ Settings"]
+tab_live, tab_positions, tab_research, tab_settings = st.tabs(
+    ["🚦 Live", "📂 Positions", "🧪 Research", "⚙️ Settings"]
 )
 
-# =====================================================
-# LIVE TAB
-# =====================================================
+# ======================================================
+# LIVE TERMINAL
+# ======================================================
 
 with tab_live:
 
-    st.subheader("📌 Portfolio Snapshot")
+    st.subheader("Portfolio Snapshot")
 
     c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Account Equity", f"₹{ACCOUNT}")
+    c1.metric("Account", f"₹{ACCOUNT}")
     c2.metric("Risk / Trade", f"{cfg['trade']['risk_per_trade_pct']*100:.2f}%")
-    c3.metric("Max Positions", "5")
-    c4.metric("RR", cfg["trade"]["take_profit_R"])
+    c3.metric("RR", cfg["trade"]["take_profit_R"])
+    c4.metric("Top Stocks", cfg["signals"]["top_stocks"])
 
-    if st.button("🔄 Refresh Live Signals"):
+    if st.button("🔄 Generate Signals"):
 
-        with st.spinner("Generating signals..."):
+        with st.spinner("Running realtime engine..."):
             df = run_realtime()
 
         if df.empty:
-            st.warning("No signals today.")
-        else:
+            st.warning("No signals.")
+            st.stop()
 
-            # Derived trader info
-            df["risk_per_trade_₹"] = (
-                ACCOUNT * cfg["trade"]["risk_per_trade_pct"]
-            ).round(0)
+        # Derived metrics
+        df["risk_₹"] = (ACCOUNT * cfg["trade"]["risk_per_trade_pct"]).round(0)
+        df["R"] = ((df["target"]-df["entry"])/(df["entry"]-df["stop"])).round(2)
+        df["position_value"] = (df["entry"] * df["qty"]).round(0)
 
-            df["R_multiple"] = (
-                (df["target"] - df["entry"]) /
-                (df["entry"] - df["stop"])
-            ).round(2)
+        st.subheader("Today Trade Plan")
 
-            df["position_value"] = (df["entry"] * df["qty"]).round(0)
+        st.dataframe(df, use_container_width=True)
 
-            st.subheader("🚦 Today’s Trade Plan")
+        e1,e2,e3 = st.columns(3)
+        e1.metric("Positions", len(df))
+        e2.metric("Total Exposure ₹", int(df["position_value"].sum()))
+        e3.metric("Total Risk ₹", int(df["risk_₹"].sum()))
 
-            st.dataframe(df, use_container_width=True)
+        csv = df.to_csv(index=False).encode()
+        st.download_button("⬇ Download Trades", csv, "today_trades.csv")
 
-            st.subheader("📊 Exposure Summary")
+        st.session_state["live_positions"] = df
 
-            e1,e2,e3 = st.columns(3)
-            e1.metric("Total Positions", len(df))
-            e2.metric("Total Exposure ₹", int(df["position_value"].sum()))
-            e3.metric("Total Risk ₹", int(df["risk_per_trade_₹"].sum()))
+# ======================================================
+# POSITIONS (Paper)
+# ======================================================
 
-            csv = df.to_csv(index=False).encode()
-            st.download_button("⬇ Download Signals CSV", csv, "signals.csv")
+with tab_positions:
 
-# =====================================================
-# BACKTEST TAB
-# =====================================================
+    st.subheader("Paper Positions")
 
-with tab_backtest:
+    if "live_positions" not in st.session_state:
+        st.info("Generate signals first.")
+        st.stop()
 
-    st.subheader("🧪 Strategy Research")
+    pos = st.session_state["live_positions"].copy()
+
+    prices = yf.download(pos["symbol"].tolist(), period="1d", interval="1m", group_by="ticker", progress=False)
+
+    pnl = []
+
+    for _, r in pos.iterrows():
+        try:
+            p = prices[r["symbol"]]["Close"].iloc[-1]
+            pnl.append((p - r["entry"]) * r["qty"])
+        except:
+            pnl.append(0)
+
+    pos["current_pnl"] = pnl
+
+    st.dataframe(pos, use_container_width=True)
+
+    st.metric("Total Unrealized PnL ₹", int(sum(pnl)))
+
+# ======================================================
+# RESEARCH
+# ======================================================
+
+with tab_research:
 
     if st.button("Run Backtest"):
 
@@ -87,57 +111,28 @@ with tab_backtest:
         c2.metric("Win Rate", f"{res['winrate']}%")
         c3.metric("Final Equity", f"₹{res['final_equity']}")
 
-        if not trades.empty:
+        st.subheader("Trades")
+        st.dataframe(trades, use_container_width=True)
 
-            st.subheader("📄 Trades")
-            st.dataframe(trades, use_container_width=True)
+        st.subheader("Equity Curve")
+        eq = trades[["equity"]].copy()
+        eq["i"] = range(len(eq))
+        st.line_chart(eq.set_index("i"))
 
-            st.subheader("📈 Equity Curve")
-            eq = trades[["equity"]].copy()
-            eq["i"] = range(len(eq))
-            st.line_chart(eq.set_index("i"))
+        st.subheader("Exit Reasons")
+        st.bar_chart(trades["exit_reason"].value_counts())
 
-            st.subheader("📉 Exit Breakdown")
-            st.bar_chart(trades["exit_reason"].value_counts())
-
-# =====================================================
-# SETTINGS TAB
-# =====================================================
+# ======================================================
+# SETTINGS
+# ======================================================
 
 with tab_settings:
 
-    st.subheader("⚙️ Strategy Parameters")
+    st.subheader("Strategy Controls")
 
-    cfg["backtest"]["start"] = st.text_input(
-        "Backtest Start",
-        value=cfg["backtest"]["start"]
-    )
+    cfg["signals"]["top_stocks"] = st.slider("Top Stocks",1,5,cfg["signals"]["top_stocks"])
+    cfg["trade"]["risk_per_trade_pct"] = st.slider("Risk %",0.001,0.01,cfg["trade"]["risk_per_trade_pct"],0.001)
+    cfg["trade"]["atr_mult"] = st.slider("ATR Mult",1.0,4.0,cfg["trade"]["atr_mult"],0.1)
+    cfg["trade"]["take_profit_R"] = st.slider("Reward Ratio",1.0,3.0,cfg["trade"]["take_profit_R"],0.1)
 
-    cfg["signals"]["top_stocks"] = st.slider(
-        "Top Stocks",
-        1,5,
-        cfg["signals"]["top_stocks"]
-    )
-
-    cfg["trade"]["risk_per_trade_pct"] = st.slider(
-        "Risk per Trade %",
-        0.001,0.01,
-        cfg["trade"]["risk_per_trade_pct"],
-        0.001
-    )
-
-    cfg["trade"]["atr_mult"] = st.slider(
-        "ATR Multiplier",
-        1.0,4.0,
-        cfg["trade"]["atr_mult"],
-        0.1
-    )
-
-    cfg["trade"]["take_profit_R"] = st.slider(
-        "Reward Ratio",
-        1.0,3.0,
-        cfg["trade"]["take_profit_R"],
-        0.1
-    )
-
-    st.info("Settings apply on next refresh / backtest.")
+    st.info("Settings apply next run.")
