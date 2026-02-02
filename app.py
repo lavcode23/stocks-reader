@@ -1,138 +1,135 @@
 import streamlit as st
-import yaml
 import pandas as pd
-import yfinance as yf
-from datetime import datetime
+import yaml
 
-from backtest import run_backtest
 from realtime_engine import run_realtime
+from backtest import run_backtest
 
-st.set_page_config(layout="wide", page_title="AI Trading Terminal")
+st.set_page_config(layout="wide", page_title="Beginner Trading Cockpit")
 
-ACCOUNT = 100000
+ACCOUNT_DEFAULT = 100000.0
 
-with open("config.yaml") as f:
-    cfg = yaml.safe_load(f)
+st.title("🧭 Beginner Trading Cockpit (Research + Live Signals)")
 
-st.title("📊 AI Trading Terminal")
+tab_live, tab_backtest, tab_help = st.tabs(["🚦 Live Trade Plan", "🧪 Backtest", "📘 How to Trade"])
 
-tab_live, tab_positions, tab_research, tab_settings = st.tabs(
-    ["🚦 Live", "📂 Positions", "🧪 Research", "⚙️ Settings"]
-)
-
-# ======================================================
-# LIVE TERMINAL
-# ======================================================
-
+# ---------------------------------------------------------
+# LIVE
+# ---------------------------------------------------------
 with tab_live:
+    st.subheader("Today’s Decision")
 
-    st.subheader("Portfolio Snapshot")
+    c1, c2, c3 = st.columns(3)
+    account = c1.number_input("Account Equity (₹)", min_value=10000.0, value=ACCOUNT_DEFAULT, step=1000.0)
+    max_positions = c2.selectbox("Max Trades Today", [1, 2, 3, 4, 5], index=2)
+    mode = c3.selectbox("Mode", ["Beginner (recommended)", "Advanced"])
 
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Account", f"₹{ACCOUNT}")
-    c2.metric("Risk / Trade", f"{cfg['trade']['risk_per_trade_pct']*100:.2f}%")
-    c3.metric("RR", cfg["trade"]["take_profit_R"])
-    c4.metric("Top Stocks", cfg["signals"]["top_stocks"])
+    if st.button("🔄 Generate Today’s Trade Plan"):
+        with st.spinner("Building your trade plan..."):
+            out = run_realtime(account_equity=float(account), max_positions=int(max_positions))
 
-    if st.button("🔄 Generate Signals"):
+        market_ok = out["market_ok"]
+        note = out["note"]
+        df = out["signals"]
 
-        with st.spinner("Running realtime engine..."):
-            df = run_realtime()
-
-        if df.empty:
-            st.warning("No signals.")
+        if not market_ok:
+            st.error("⛔ NO TRADE TODAY")
+            st.info(note)
             st.stop()
 
-        # Derived metrics
-        df["risk_₹"] = round(ACCOUNT * cfg["trade"]["risk_per_trade_pct"], 0)
-        df["R"] = ((df["target"]-df["entry"])/(df["entry"]-df["stop"])).round(2)
-        df["position_value"] = (df["entry"] * df["qty"]).round(0)
+        st.success("✅ TRADE ALLOWED TODAY")
+        st.info(note)
 
-        st.subheader("Today Trade Plan")
+        if df.empty:
+            st.warning("No trades to take today.")
+            st.stop()
 
-        st.dataframe(df, use_container_width=True)
+        st.subheader("Trade Cards (Do exactly this)")
 
-        e1,e2,e3 = st.columns(3)
-        e1.metric("Positions", len(df))
-        e2.metric("Total Exposure ₹", int(df["position_value"].sum()))
-        e3.metric("Total Risk ₹", int(df["risk_₹"].sum()))
+        # render beginner cards
+        for i, row in df.reset_index(drop=True).iterrows():
+            with st.container(border=True):
+                st.markdown(f"### {i+1}) {row['symbol']}  —  Sector: **{row['sector']}**  |  Confidence: **{row['ml_prob']}**")
 
+                a, b, c, d = st.columns(4)
+                a.metric("✅ Buy above", f"₹{row['entry_buy_above']}")
+                b.metric("🛑 Stop loss", f"₹{row['stop_loss']}")
+                c.metric("🎯 Target", f"₹{row['target']}")
+                d.metric("📦 Quantity", f"{int(row['qty'])}")
+
+                e, f, g = st.columns(3)
+                e.metric("💸 Max Loss", f"₹{int(row['max_loss_₹'])}")
+                f.metric("📈 R Multiple", f"{row['R_multiple']}R")
+                g.metric("⏱ Validity", row["validity"])
+
+                st.markdown(
+                    """
+**How to place orders (simple):**
+1) Place a **BUY Stop-Limit** / **BUY Stop** at **Buy above** price.  
+2) Immediately place a **STOP LOSS** at the Stop price.  
+3) Place a **Target SELL Limit** at the Target price.  
+4) If buy is NOT triggered today → **DO NOTHING** (skip trade).
+                    """
+                )
+
+        st.subheader("Download")
         csv = df.to_csv(index=False).encode()
-        st.download_button("⬇ Download Trades", csv, "today_trades.csv")
+        st.download_button("⬇ Download Today’s Trades (CSV)", csv, "today_trade_plan.csv")
 
-        st.session_state["live_positions"] = df
+        if mode.startswith("Advanced"):
+            st.subheader("Full Table")
+            st.dataframe(df, use_container_width=True)
 
-# ======================================================
-# POSITIONS (Paper)
-# ======================================================
 
-with tab_positions:
+# ---------------------------------------------------------
+# BACKTEST
+# ---------------------------------------------------------
+with tab_backtest:
+    st.subheader("Research Backtest (learning only)")
 
-    st.subheader("Paper Positions")
-
-    if "live_positions" not in st.session_state:
-        st.info("Generate signals first.")
-        st.stop()
-
-    pos = st.session_state["live_positions"].copy()
-
-    prices = yf.download(pos["symbol"].tolist(), period="1d", interval="1m", group_by="ticker", progress=False)
-
-    pnl = []
-
-    for _, r in pos.iterrows():
-        try:
-            p = prices[r["symbol"]]["Close"].iloc[-1]
-            pnl.append((p - r["entry"]) * r["qty"])
-        except:
-            pnl.append(0)
-
-    pos["current_pnl"] = pnl
-
-    st.dataframe(pos, use_container_width=True)
-
-    st.metric("Total Unrealized PnL ₹", int(sum(pnl)))
-
-# ======================================================
-# RESEARCH
-# ======================================================
-
-with tab_research:
+    with open("config.yaml") as f:
+        cfg = yaml.safe_load(f)
 
     if st.button("Run Backtest"):
-
         with st.spinner("Running backtest..."):
             res = run_backtest(cfg)
 
         trades = res["trades"]
-
-        c1,c2,c3 = st.columns(3)
+        c1, c2, c3 = st.columns(3)
         c1.metric("Trades", len(trades))
         c2.metric("Win Rate", f"{res['winrate']}%")
         c3.metric("Final Equity", f"₹{res['final_equity']}")
 
-        st.subheader("Trades")
         st.dataframe(trades, use_container_width=True)
 
-        st.subheader("Equity Curve")
-        eq = trades[["equity"]].copy()
-        eq["i"] = range(len(eq))
-        st.line_chart(eq.set_index("i"))
+        if not trades.empty:
+            eq = trades[["equity"]].copy()
+            eq["i"] = range(len(eq))
+            st.line_chart(eq.set_index("i"))
 
-        st.subheader("Exit Reasons")
-        st.bar_chart(trades["exit_reason"].value_counts())
 
-# ======================================================
-# SETTINGS
-# ======================================================
+# ---------------------------------------------------------
+# HELP
+# ---------------------------------------------------------
+with tab_help:
+    st.subheader("How a beginner should use this output")
 
-with tab_settings:
+    st.markdown(
+        """
+### Rules (non-negotiable)
+- Trade only when the app says **TRADE ALLOWED**.
+- Take maximum **3 trades** per day.
+- Always place **Stop Loss** immediately after entry.
+- If entry price is not triggered → **skip**.
+- Never increase quantity beyond what app shows.
 
-    st.subheader("Strategy Controls")
+### What “Max Loss” means
+That is the maximum damage if stop is hit.
 
-    cfg["signals"]["top_stocks"] = st.slider("Top Stocks",1,5,cfg["signals"]["top_stocks"])
-    cfg["trade"]["risk_per_trade_pct"] = st.slider("Risk %",0.001,0.01,cfg["trade"]["risk_per_trade_pct"],0.001)
-    cfg["trade"]["atr_mult"] = st.slider("ATR Mult",1.0,4.0,cfg["trade"]["atr_mult"],0.1)
-    cfg["trade"]["take_profit_R"] = st.slider("Reward Ratio",1.0,3.0,cfg["trade"]["take_profit_R"],0.1)
+### Accuracy is not the goal
+Goal is: **small losses + bigger wins + discipline**.
 
-    st.info("Settings apply next run.")
+### Paper trade first
+Use this for 2 weeks on paper before real money.
+        """
+    )
