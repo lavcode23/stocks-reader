@@ -5,3 +5,4 @@ yfinance
 pyyaml
 scikit-learn
 openpyxl
+plotly
