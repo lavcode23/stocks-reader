@@ -44,7 +44,7 @@ with tab_live:
             st.stop()
 
         # Derived metrics
-        df["risk_₹"] = (ACCOUNT * cfg["trade"]["risk_per_trade_pct"]).round(0)
+        df["risk_₹"] = round(ACCOUNT * cfg["trade"]["risk_per_trade_pct"], 0)
         df["R"] = ((df["target"]-df["entry"])/(df["entry"]-df["stop"])).round(2)
         df["position_value"] = (df["entry"] * df["qty"]).round(0)
 
