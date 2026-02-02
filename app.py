@@ -13,6 +13,29 @@ from journal import (
     auto_fill_open_trades,
     performance_stats,
 )
+# ---------------- AUTO BOOTSTRAP (for first-time users) ----------------
+from pathlib import Path
+
+DEMO_PATH = Path("paper_journal.csv")
+
+if not DEMO_PATH.exists():
+    demo = pd.DataFrame({
+        "timestamp": pd.date_range(end=pd.Timestamp.now(), periods=20).astype(str),
+        "symbol": ["DEMO"]*20,
+        "sector": ["Demo"]*20,
+        "entry": np.random.uniform(90,110,20),
+        "stop": np.random.uniform(85,95,20),
+        "target": np.random.uniform(115,130,20),
+        "qty": [10]*20,
+        "ml_prob": np.random.uniform(0.55,0.7,20),
+        "R_multiple": np.random.uniform(1.5,2.5,20),
+        "max_loss": np.random.uniform(200,500,20),
+        "status": ["CLOSED"]*20,
+        "entry_filled_price": np.random.uniform(90,110,20),
+        "exit_price": np.random.uniform(95,125,20),
+        "pnl": np.random.uniform(-200,500,20)
+    })
+    demo.to_csv(DEMO_PATH,index=False)
 
 # -----------------------------
 # Page
