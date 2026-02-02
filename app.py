@@ -4,14 +4,17 @@ import yaml
 
 from realtime_engine import run_realtime
 from backtest import run_backtest
+from journal import load_journal, append_trades, update_trade
 
 st.set_page_config(layout="wide", page_title="Beginner Trading Cockpit")
 
 ACCOUNT_DEFAULT = 100000.0
 
-st.title("🧭 Beginner Trading Cockpit (Research + Live Signals)")
+st.title("🧭 Beginner Trading Cockpit (Live + Journal + Research)")
 
-tab_live, tab_backtest, tab_help = st.tabs(["🚦 Live Trade Plan", "🧪 Backtest", "📘 How to Trade"])
+tab_live, tab_journal, tab_backtest, tab_help = st.tabs(
+    ["🚦 Live Trade Plan", "📒 Paper Journal", "🧪 Backtest", "📘 How to Trade"]
+)
 
 # ---------------------------------------------------------
 # LIVE
@@ -22,7 +25,7 @@ with tab_live:
     c1, c2, c3 = st.columns(3)
     account = c1.number_input("Account Equity (₹)", min_value=10000.0, value=ACCOUNT_DEFAULT, step=1000.0)
     max_positions = c2.selectbox("Max Trades Today", [1, 2, 3, 4, 5], index=2)
-    mode = c3.selectbox("Mode", ["Beginner (recommended)", "Advanced"])
+    broker = c3.selectbox("Broker Format", ["Zerodha", "Upstox"])
 
     if st.button("🔄 Generate Today’s Trade Plan"):
         with st.spinner("Building your trade plan..."):
@@ -44,12 +47,12 @@ with tab_live:
             st.warning("No trades to take today.")
             st.stop()
 
-        st.subheader("Trade Cards (Do exactly this)")
+        # Render Trade Cards
+        st.subheader("Trade Cards (Follow exactly)")
 
-        # render beginner cards
         for i, row in df.reset_index(drop=True).iterrows():
             with st.container(border=True):
-                st.markdown(f"### {i+1}) {row['symbol']}  —  Sector: **{row['sector']}**  |  Confidence: **{row['ml_prob']}**")
+                st.markdown(f"### {i+1}) {row['symbol']} — Sector: **{row['sector']}** | Confidence: **{row['ml_prob']}**")
 
                 a, b, c, d = st.columns(4)
                 a.metric("✅ Buy above", f"₹{row['entry_buy_above']}")
@@ -64,29 +67,85 @@ with tab_live:
 
                 st.markdown(
                     """
-**How to place orders (simple):**
-1) Place a **BUY Stop-Limit** / **BUY Stop** at **Buy above** price.  
-2) Immediately place a **STOP LOSS** at the Stop price.  
-3) Place a **Target SELL Limit** at the Target price.  
-4) If buy is NOT triggered today → **DO NOTHING** (skip trade).
+**Order steps (simple):**
+1) Place a **BUY Stop** at *Buy above*.  
+2) Immediately place **STOP LOSS** at *Stop loss*.  
+3) Place **Target SELL Limit** at *Target*.  
+4) If Buy is NOT triggered today → **SKIP**.
                     """
                 )
 
-        st.subheader("Download")
+        # ---------------- One-click Copy Orders ----------------
+        st.subheader("🧾 One-Click Copy Orders")
+
+        if broker == "Zerodha":
+            # Simple Kite CSV-like lines (copy-paste)
+            lines = []
+            for _, r in df.iterrows():
+                lines.append(f"{r['symbol']},BUY,{int(r['qty'])},{r['entry_buy_above']},SL:{r['stop_loss']},TGT:{r['target']}")
+            kite_text = "\n".join(lines)
+            st.text_area("Copy into Zerodha (reference format)", kite_text, height=150)
+
+        if broker == "Upstox":
+            lines = []
+            for _, r in df.iterrows():
+                lines.append(f"{r['symbol']} | BUY | QTY {int(r['qty'])} | ENTRY {r['entry_buy_above']} | SL {r['stop_loss']} | TGT {r['target']}")
+            upstox_text = "\n".join(lines)
+            st.text_area("Copy into Upstox (reference format)", upstox_text, height=150)
+
+        # CSV download
         csv = df.to_csv(index=False).encode()
         st.download_button("⬇ Download Today’s Trades (CSV)", csv, "today_trade_plan.csv")
 
-        if mode.startswith("Advanced"):
-            st.subheader("Full Table")
-            st.dataframe(df, use_container_width=True)
+        # ---------------- Add to Paper Journal ----------------
+        if st.button("📒 Add These Trades to Paper Journal"):
+            j = append_trades(df)
+            st.success(f"Added {len(df)} trades to journal.")
+            st.dataframe(j.tail(20), use_container_width=True)
 
+
+# ---------------------------------------------------------
+# PAPER JOURNAL
+# ---------------------------------------------------------
+with tab_journal:
+    st.subheader("📒 Paper Trade Journal")
+
+    journal = load_journal()
+    if journal.empty:
+        st.info("Journal is empty. Add trades from Live tab.")
+        st.stop()
+
+    st.dataframe(journal, use_container_width=True)
+
+    st.subheader("Update Trade (when filled / exited)")
+
+    col1, col2, col3 = st.columns(3)
+    sym = col1.selectbox("Symbol", journal[journal["status"]=="OPEN"]["symbol"].unique())
+    entry_fill = col2.text_input("Entry Filled Price (optional)")
+    exit_price = col3.text_input("Exit Price (optional)")
+
+    if st.button("Update Selected Trade"):
+        ef = float(entry_fill) if entry_fill else None
+        xp = float(exit_price) if exit_price else None
+        j2 = update_trade(sym, ef, xp)
+        st.success("Trade updated.")
+        st.dataframe(j2.tail(20), use_container_width=True)
+
+    # Journal summary
+    st.subheader("Journal Summary")
+    closed = journal[journal["status"]=="CLOSED"].copy()
+    if not closed.empty:
+        pnl = pd.to_numeric(closed["pnl"], errors="coerce").fillna(0)
+        c1,c2,c3 = st.columns(3)
+        c1.metric("Closed Trades", len(closed))
+        c2.metric("Total PnL ₹", int(pnl.sum()))
+        c3.metric("Win Rate", f"{(pnl>0).mean()*100:.1f}%")
 
 # ---------------------------------------------------------
 # BACKTEST
 # ---------------------------------------------------------
 with tab_backtest:
     st.subheader("Research Backtest (learning only)")
-
     with open("config.yaml") as f:
         cfg = yaml.safe_load(f)
 
@@ -101,35 +160,35 @@ with tab_backtest:
         c3.metric("Final Equity", f"₹{res['final_equity']}")
 
         st.dataframe(trades, use_container_width=True)
-
         if not trades.empty:
             eq = trades[["equity"]].copy()
             eq["i"] = range(len(eq))
             st.line_chart(eq.set_index("i"))
 
-
 # ---------------------------------------------------------
 # HELP
 # ---------------------------------------------------------
 with tab_help:
-    st.subheader("How a beginner should use this output")
-
     st.markdown(
         """
-### Rules (non-negotiable)
-- Trade only when the app says **TRADE ALLOWED**.
-- Take maximum **3 trades** per day.
-- Always place **Stop Loss** immediately after entry.
-- If entry price is not triggered → **skip**.
-- Never increase quantity beyond what app shows.
+### Beginner Rules
+- Trade only when app says **TRADE ALLOWED**.
+- Max 3 trades/day.
+- Always place Stop Loss immediately.
+- If Buy price not triggered → SKIP.
+- Never increase quantity.
 
-### What “Max Loss” means
-That is the maximum damage if stop is hit.
+### Paper Journal
+Use **Paper Journal** tab:
+- Add trades from Live.
+- When entry fills, update Entry Filled Price.
+- When exited, update Exit Price.
+- App calculates PnL.
 
-### Accuracy is not the goal
-Goal is: **small losses + bigger wins + discipline**.
+### Brokers
+The copy formats are **reference templates**.
+Paste into Zerodha/Upstox and place orders manually.
 
-### Paper trade first
-Use this for 2 weeks on paper before real money.
+Paper trade for 2–3 weeks before real money.
         """
     )
