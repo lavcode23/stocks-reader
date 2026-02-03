@@ -5,3 +5,5 @@ yfinance
 plotly
 scikit-learn
 matplotlib
+pyyaml
+
