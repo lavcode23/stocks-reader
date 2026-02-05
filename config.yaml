@@ -59,3 +59,19 @@ costs:
 backtest:
   start: "2019-01-01"
   end: null
+  intraday:
+  enabled: true
+  interval: "5m"
+  lookback_days: 10
+
+risk:
+  cooldown_after_losses: 2
+
+trade:
+  partial_profit_R: 1.0
+  trail_after_R: 2.0
+  trail_atr_mult: 1.2
+
+learning:
+  retrain_window_days: 365
+
